@@ -1,34 +1,70 @@
 // ─── Core Types ───────────────────────────────────────────────
+// ReelMagic application-level types.
+// DB-specific row types live in ./db-types.ts and are re-exported here.
 
-export interface VideoJob {
-  id: string;
-  userId: string;
-  status: "queued" | "processing" | "completed" | "failed";
+import type {
+  PlanTier,
+  ProfileRow,
+  VideoJobRow,
+  TemplateRow,
+  CreditsLedgerRow,
+  ApiKeyRow,
+  UsageDailyRow,
+  Database,
+} from "./db-types";
+
+// Re-export DB types for convenience
+export type {
+  PlanTier,
+  ProfileRow,
+  VideoJobRow,
+  TemplateRow,
+  CreditsLedgerRow,
+  ApiKeyRow,
+  UsageDailyRow,
+  Database,
+} from "./db-types";
+// Note: JobStatus from db-types is NOT re-exported here because this file
+// defines its own local JobStatus interface (API response type). Import
+// the DB enum directly from "./db-types" if you need it: `import type { JobStatus as DbJobStatus } from "@/lib/db-types"`
+
+// ─── Application VideoJob (extends DB row) ────────────────────
+
+export interface VideoJob extends VideoJobRow {
+  /** Legacy alias for prompt — the user's script text */
   script: string;
+  /** Legacy alias for template slug */
   template: string;
-  style: string;
+  /** Legacy alias for duration_seconds */
   duration: number;
-  aspectRatio: "9:16" | "16:9";
+  /** Legacy alias for aspect_ratio */
+  aspectRatio: "9:16" | "16:9" | "1:1";
+  /** Legacy alias for output_url */
   outputUrl?: string;
+  /** Legacy alias for thumbnail_url */
   thumbnailUrl?: string;
-  progress: number;
-  createdAt: string;
-  updatedAt: string;
-  completedAt?: string;
+  /** Legacy alias for error_message */
   error?: string;
-  metadata?: Record<string, unknown>;
+  /** Legacy alias for updated_at (DB trigger-maintained) */
+  updatedAt: string;
+  /** Legacy alias for completed_at */
+  completedAt?: string;
 }
 
-export interface Template {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
+// ─── Application Template (extends DB row) ────────────────────
+
+export interface Template extends TemplateRow {
+  /** Legacy alias for thumbnail_url */
   thumbnail?: string;
+  /** Legacy alias for default_duration */
   defaultDuration: number;
+  /** Tags for filtering (application-level, not in DB) */
   tags: string[];
+  /** Optional template configuration */
   config?: TemplateConfig;
 }
+
+// ─── Template Configuration Types ─────────────────────────────
 
 export interface TemplateConfig {
   scenes?: SceneConfig[];
@@ -60,7 +96,7 @@ export interface GenerationRequest {
   template: string;
   style: string;
   duration?: number;
-  aspectRatio?: "9:16" | "16:9";
+  aspectRatio?: "9:16" | "16:9" | "1:1";
 }
 
 export interface GenerationResponse {
@@ -90,7 +126,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  plan: "free" | "starter" | "pro";
+  plan: PlanTier;
   videosGenerated: number;
   videosLimit: number;
   stripeCustomerId?: string;

@@ -1,55 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GenerationRequest, GenerationResponse } from "@/lib/types";
+import { v4 as uuidv4 } from "uuid";
+import { addVideoJob } from "@/lib/queue";
+import { checkRateLimit } from "@/lib/rate-limit";
+import type { PlanTier } from "@/lib/rate-limit";
 
-// TODO: Connect to FastAPI backend pipeline
-// TODO: Validate request with Zod schema
-// TODO: Authenticate user and check quota
-// TODO: Queue job in Redis/database
-
-export async function POST(request: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    const body: GenerationRequest = await request.json();
+    const body = await req.json();
+    const { prompt, templateId, style, duration, aspectRatio, negativePrompt, model } = body;
 
-    // Validate required fields
-    if (!body.script || !body.template || !body.style) {
+    if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
       return NextResponse.json(
-        { error: "Missing required fields: script, template, style" },
+        { error: "Prompt is required" },
         { status: 400 }
       );
     }
 
-    // TODO: Validate with Zod
-    // const validated = generationSchema.parse(body);
+    if (prompt.length > 2000) {
+      return NextResponse.json(
+        { error: "Prompt must be under 2000 characters" },
+        { status: 400 }
+      );
+    }
 
-    // Generate a unique job ID
-    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    // TODO: Get from Clerk auth when deployed
+    const userId = body.userId || "dev-user";
+    const plan: PlanTier = body.plan || "free";
 
-    // TODO: Queue the job for processing
-    // await queueJob(jobId, body);
+    // Check rate limit
+    const { allowed, remaining } = await checkRateLimit(userId, plan);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Upgrade your plan for more videos." },
+        {
+          status: 429,
+          headers: { "X-RateLimit-Remaining": String(remaining) },
+        }
+      );
+    }
 
-    // TODO: Store job status in database
-    // await db.job.create({ id: jobId, status: "queued", ...body });
+    const durationSeconds = Math.max(2, Math.min(duration || 5, 60));
+    const jobId = uuidv4();
 
-    console.log(`[generate] Queued job ${jobId}:`, {
-      template: body.template,
-      style: body.style,
-      duration: body.duration,
-      aspectRatio: body.aspectRatio,
+    await addVideoJob({
+      jobId,
+      userId,
+      plan,
+      prompt: prompt.trim(),
+      templateId,
+      style,
+      durationSeconds,
+      aspectRatio: aspectRatio || "9:16",
+      negativePrompt,
+      model,
     });
 
-    const response: GenerationResponse = {
+    return NextResponse.json({
       jobId,
       status: "queued",
-      message: "Video generation queued. Poll /api/status/[jobId] for updates.",
-      estimatedTime: Math.max(30, (body.duration || 15) * 3),
-    };
-
-    return NextResponse.json(response, { status: 202 });
+      estimatedTimeSeconds: durationSeconds * 12,
+      position: 0, // TODO: get from queue
+    });
   } catch (error) {
-    console.error("[generate] Error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Generation error:", message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

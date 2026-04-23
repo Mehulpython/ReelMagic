@@ -3,6 +3,13 @@
 import Link from "next/link";
 import { Sparkles, Menu, X } from "lucide-react";
 import { useState } from "react";
+import {
+  SignedIn,
+  SignedOut,
+  UserButton,
+  SignInButton,
+  SignUpButton,
+} from "@clerk/nextjs";
 
 const NAV_LINKS = [
   { href: "/generate", label: "Generate" },
@@ -37,16 +44,42 @@ export function Navbar() {
               {link.label}
             </Link>
           ))}
+
+          {/* Signed-in link */}
+          <SignedIn>
+            <Link
+              href="/dashboard"
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-400 transition-colors hover:bg-white/5 hover:text-white"
+            >
+              My Videos
+            </Link>
+          </SignedIn>
         </div>
 
-        {/* CTA */}
+        {/* Auth controls — desktop */}
         <div className="hidden items-center gap-3 md:flex">
-          <Link
-            href="/generate"
-            className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-500"
-          >
-            Start Creating
-          </Link>
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="rounded-lg px-4 py-2 text-sm font-medium text-gray-400 transition-colors hover:bg-white/5 hover:text-white">
+                Sign In
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-500">
+                Get Started
+              </button>
+            </SignUpButton>
+          </SignedOut>
+          <SignedIn>
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: "h-8 w-8",
+                },
+              }}
+            />
+          </SignedIn>
         </div>
 
         {/* Mobile toggle */}
@@ -72,13 +105,48 @@ export function Navbar() {
                 {link.label}
               </Link>
             ))}
-            <Link
-              href="/generate"
-              onClick={() => setMobileOpen(false)}
-              className="mt-2 rounded-lg bg-primary-600 px-4 py-2.5 text-center text-sm font-medium text-white"
-            >
-              Start Creating
-            </Link>
+
+            <SignedIn>
+              <Link
+                href="/dashboard"
+                onClick={() => setMobileOpen(false)}
+                className="rounded-lg px-4 py-2.5 text-sm font-medium text-gray-400 transition-colors hover:bg-white/5 hover:text-white"
+              >
+                My Videos
+              </Link>
+            </SignedIn>
+
+            <SignedOut>
+              <SignInButton mode="modal">
+                <button
+                  onClick={() => setMobileOpen(false)}
+                  className="rounded-lg px-4 py-2.5 text-left text-sm font-medium text-gray-400 transition-colors hover:bg-white/5 hover:text-white"
+                >
+                  Sign In
+                </button>
+              </SignInButton>
+              <SignUpButton mode="modal">
+                <button
+                  onClick={() => setMobileOpen(false)}
+                  className="mt-2 rounded-lg bg-primary-600 px-4 py-2.5 text-center text-sm font-medium text-white"
+                >
+                  Get Started
+                </button>
+              </SignUpButton>
+            </SignedOut>
+
+            <SignedIn>
+              <div className="mt-2 flex items-center gap-3 px-4 py-2.5">
+                <UserButton
+                  afterSignOutUrl="/"
+                  appearance={{
+                    elements: {
+                      avatarBox: "h-8 w-8",
+                    },
+                  }}
+                />
+              </div>
+            </SignedIn>
           </div>
         </div>
       )}
