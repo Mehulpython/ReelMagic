@@ -20,6 +20,7 @@
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.37.0",
     "bullmq": "^5.76.1",
+    "fluent-ffmpeg": "^2.1.3",
     "framer-motion": "^11.0.0",
     "ioredis": "^5.10.1",
     "lucide-react": "^0.344.0",
@@ -32,6 +33,7 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@types/fluent-ffmpeg": "^2.1.28",
     "@types/node": "^20.11.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",

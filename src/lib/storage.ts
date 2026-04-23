@@ -95,3 +95,7 @@ export function videoKey(userId: string, jobId: string, ext = "mp4") {
 export function thumbnailKey(userId: string, jobId: string, ext = "jpg") {
   return `thumbnails/${userId}/${jobId}/thumb.${ext}`;
 }
+
+export function audioKey(userId: string, jobId: string, ext = "mp3") {
+  return `audio/${userId}/${jobId}/voiceover.${ext}`;
+}

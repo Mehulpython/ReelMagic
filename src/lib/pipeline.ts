@@ -1,17 +1,25 @@
 import type { VideoJobData, VideoJobResult } from "./queue";
 import { generateImage, generateVideo } from "./fal";
 import { generateVideoFromImage } from "./replicate";
-import { uploadFromUrl, videoKey, thumbnailKey } from "./storage";
+import { generateVoiceover } from "./elevenlabs";
+import { generateBGMForTemplate } from "./suno";
+import { assembleVideo, generateTimedCaptions } from "./ffmpeg";
+import { uploadToR2, uploadFromUrl, videoKey, thumbnailKey, audioKey } from "./storage";
+
+// Re-export storage key helpers
+export { videoKey, thumbnailKey, audioKey };
 
 // ─── Pipeline Configuration ──────────────────────────────────
 
 export const PIPELINE_STEPS = [
   { id: "analyze", name: "Analyzing script", weight: 5 },
   { id: "keyframe", name: "Generating keyframe", weight: 15 },
-  { id: "video", name: "Generating video", weight: 40 },
-  { id: "audio", name: "Adding audio", weight: 15 },
-  { id: "upload", name: "Uploading to CDN", weight: 15 },
-  { id: "finalize", name: "Finalizing", weight: 10 },
+  { id: "video", name: "Generating video", weight: 30 },
+  { id: "voiceover", name: "Generating voiceover", weight: 10 },
+  { id: "bgm", name: "Generating background music", weight: 10 },
+  { id: "assemble", name: "Assembling final video", weight: 15 },
+  { id: "upload", name: "Uploading to CDN", weight: 10 },
+  { id: "finalize", name: "Finalizing", weight: 5 },
 ] as const;
 
 export type PipelineStepId = (typeof PIPELINE_STEPS)[number]["id"];
@@ -45,7 +53,7 @@ export async function runVideoPipeline(params: {
   const { data, onProgress } = params;
   const tracker = new ProgressTracker(onProgress);
 
-  // Step 1: Analyze script
+  // Step 1: Analyze script → build enhanced prompt
   const enhancedPrompt = buildPrompt(data.prompt, data.style);
   await tracker.completeStep("analyze");
 
@@ -73,7 +81,7 @@ export async function runVideoPipeline(params: {
     });
     videoUrl = result.url;
   } catch {
-    // Fallback to Replicate
+    // Fallback to Replicate (CogVideoX)
     const result = await generateVideoFromImage({
       imageUrl: imageResult.url,
       prompt: enhancedPrompt,
@@ -83,34 +91,126 @@ export async function runVideoPipeline(params: {
   }
   await tracker.completeStep("video");
 
-  // Step 4: TODO - Audio (ElevenLabs voiceover + Suno BGM)
-  await tracker.completeStep("audio");
+  // Step 4: Generate voiceover (ElevenLabs)
+  let voiceoverUrl: string | undefined;
+  let voiceoverDuration = 0;
 
-  // Step 5: Upload to R2 storage
-  let outputUrl = videoUrl;
+  if (data.voiceover !== false && data.prompt) {
+    try {
+      const voiceResult = await generateVoiceover(data.prompt, {
+        voiceId: data.voiceId,
+      });
+      voiceoverUrl = voiceResult.audioUrl;
+      voiceoverDuration = voiceResult.durationSeconds;
+
+      // Upload voiceover to R2 if possible
+      if (voiceoverUrl && process.env.R2_ENDPOINT) {
+        try {
+          const vKey = audioKey(data.userId, data.jobId);
+          voiceoverUrl = await uploadFromUrl(voiceoverUrl, vKey, "audio/mpeg");
+        } catch (err) {
+          console.warn("Voiceover R2 upload failed:", err);
+        }
+      }
+    } catch (err) {
+      console.warn("Voiceover generation failed, continuing without it:", err);
+    }
+  }
+  await tracker.completeStep("voiceover");
+
+  // Step 5: Generate BGM (Suno / fal.ai Stable Audio)
+  let bgmUrl: string | undefined;
+
+  if (data.bgm !== false) {
+    try {
+      const bgmResult = await generateBGMForTemplate(
+        data.templateId || "product-launch",
+        enhancedPrompt
+      );
+      bgmUrl = bgmResult.audioUrl;
+    } catch (err) {
+      console.warn("BGM generation failed, continuing without it:", err);
+    }
+  }
+  await tracker.completeStep("bgm");
+
+  // Step 6: Assemble final video with FFmpeg
+  let finalVideoUrl = videoUrl;
+  let actualDuration = data.durationSeconds;
+
+  if (process.env.FFMPEG_PATH || process.env.NODE_ENV !== "production") {
+    try {
+      const captions = data.captions || generateTimedCaptions(
+        data.prompt,
+        data.durationSeconds
+      );
+
+      const assemblyResult = await assembleVideo({
+        videoUrl,
+        voiceoverUrl,
+        bgmUrl,
+        captions,
+        watermark: data.watermark || "ReelMagic",
+        width: data.aspectRatio === "9:16" ? 1080 : 1920,
+        height: data.aspectRatio === "9:16" ? 1920 : 1080,
+      });
+
+      actualDuration = assemblyResult.durationSeconds;
+
+      // Upload assembled video to R2
+      if (process.env.R2_ENDPOINT) {
+        const { readFile: readFs } = await import("fs/promises");
+        const buffer = await readFs(assemblyResult.outputPath);
+        const vKey = videoKey(data.userId, data.jobId);
+        finalVideoUrl = await uploadToR2(vKey, buffer, "video/mp4");
+
+        // Cleanup temp file
+        try {
+          const { unlink } = await import("fs/promises");
+          await unlink(assemblyResult.outputPath);
+        } catch { /* ignore */ }
+      } else {
+        finalVideoUrl = `file://${assemblyResult.outputPath}`;
+      }
+    } catch (err) {
+      console.warn("FFmpeg assembly failed, using raw video:", err);
+      finalVideoUrl = videoUrl;
+    }
+  }
+  await tracker.completeStep("assemble");
+
+  // Step 7: Upload to R2 (if not already done in assembly)
   let thumbUrl = imageResult.url;
 
-  if (process.env.R2_ENDPOINT) {
-    try {
-      const vKey = videoKey(data.userId, data.jobId);
-      outputUrl = await uploadFromUrl(videoUrl, vKey, "video/mp4");
+  if (!finalVideoUrl.startsWith("file://") && process.env.R2_ENDPOINT) {
+    // Upload raw video if assembly was skipped
+    if (finalVideoUrl === videoUrl) {
+      try {
+        const vKey = videoKey(data.userId, data.jobId);
+        finalVideoUrl = await uploadFromUrl(videoUrl, vKey, "video/mp4");
+      } catch (err) {
+        console.error("R2 video upload failed:", err);
+      }
+    }
 
+    // Upload thumbnail
+    try {
       const tKey = thumbnailKey(data.userId, data.jobId);
       thumbUrl = await uploadFromUrl(imageResult.url, tKey, "image/jpeg");
     } catch (err) {
-      console.error("R2 upload failed, using original URLs:", err);
+      console.error("R2 thumbnail upload failed:", err);
     }
   }
   await tracker.completeStep("upload");
 
-  // Step 6: Finalize
+  // Step 8: Finalize
   const costCents = calculateCost(data.durationSeconds, data.model);
   await tracker.completeStep("finalize");
 
   return {
-    outputUrl,
+    outputUrl: finalVideoUrl,
     thumbnailUrl: thumbUrl,
-    durationSeconds: data.durationSeconds,
+    durationSeconds: actualDuration,
     costCents,
     model: data.model || "kling-v1",
   };
@@ -129,6 +229,7 @@ function buildPrompt(prompt: string, style?: string): string {
 function calculateCost(durationSeconds: number, model?: string): number {
   const rates: Record<string, number> = {
     "kling-v1": 10,       // $0.10/sec
+    "kling-v2": 15,       // $0.15/sec
     "seedance-2": 8,      // $0.08/sec
     "cogvideox": 6,       // $0.06/sec
     "wan": 4,             // $0.04/sec

@@ -15,6 +15,11 @@ export interface VideoJobData {
   inputImageUrl?: string;
   negativePrompt?: string;
   model?: string;
+  voiceover?: boolean;
+  voiceId?: string;
+  bgm?: boolean;
+  captions?: string[];
+  watermark?: string;
 }
 
 export interface VideoJobResult {
