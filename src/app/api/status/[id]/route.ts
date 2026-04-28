@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getQueueJobStatus } from "@/lib/queue";
+import { logger } from "@/lib/logger";
+
+const log = logger.child({ endpoint: "status" });
 
 export async function GET(
   req: NextRequest,
@@ -26,7 +29,7 @@ export async function GET(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("Status error:", message);
+    log.error({ err: message }, "Status check error");
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

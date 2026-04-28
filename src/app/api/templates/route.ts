@@ -1,143 +1,118 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Template } from "@/lib/types";
+import { createServerClient } from "@/lib/supabase";
+import { validate, TemplateQuerySchema } from "@/lib/validation";
+import { logger } from "@/lib/logger";
 
-// TODO: Fetch templates from database or config file
-// TODO: Add pagination and filtering
+const log = logger.child({ endpoint: "templates" });
 
-const TEMPLATES: Template[] = [
-  {
-    id: "skibidi-reaction",
-    name: "Skibidi Reaction",
-    slug: "skibidi-reaction",
-    description:
-      "Viral reaction-style video with dynamic cuts and trending audio.",
-    category: "meme",
-    thumbnail_url: "/templates/skibidi.png",
-    thumbnail: "/templates/skibidi.png",
-    prompt_template: null,
-    default_style: null,
-    default_duration: 15,
-    default_aspect_ratio: "9:16",
-    defaultDuration: 15,
-    is_premium: false,
-    sort_order: 1,
-    created_at: new Date().toISOString(),
-    tags: ["viral", "reaction", "trending"],
-  },
-  {
-    id: "democrat-ad",
-    name: "Democrat Ad",
-    slug: "democrat-ad",
-    description:
-      "Clean, hopeful political ad format with professional voiceover.",
-    category: "political",
-    thumbnail_url: "/templates/democrat.png",
-    thumbnail: "/templates/democrat.png",
-    prompt_template: null,
-    default_style: null,
-    default_duration: 30,
-    default_aspect_ratio: "16:9",
-    defaultDuration: 30,
-    is_premium: false,
-    sort_order: 2,
-    created_at: new Date().toISOString(),
-    tags: ["political", "democrat", "campaign"],
-  },
-  {
-    id: "product-launch",
-    name: "Product Launch",
-    slug: "product-launch",
-    description:
-      "Sleek product showcase with cinematic transitions and CTA overlay.",
-    category: "commerce",
-    thumbnail_url: "/templates/product.png",
-    thumbnail: "/templates/product.png",
-    prompt_template: null,
-    default_style: null,
-    default_duration: 20,
-    default_aspect_ratio: "9:16",
-    defaultDuration: 20,
-    is_premium: false,
-    sort_order: 3,
-    created_at: new Date().toISOString(),
-    tags: ["product", "launch", "ecommerce"],
-  },
-  {
-    id: "beauty-influencer",
-    name: "Beauty Influencer",
-    slug: "beauty-influencer",
-    description:
-      "Glamorous beauty content with soft transitions and trendy music.",
-    category: "lifestyle",
-    thumbnail_url: "/templates/beauty.png",
-    thumbnail: "/templates/beauty.png",
-    prompt_template: null,
-    default_style: null,
-    default_duration: 15,
-    default_aspect_ratio: "9:16",
-    defaultDuration: 15,
-    is_premium: true,
-    sort_order: 4,
-    created_at: new Date().toISOString(),
-    tags: ["beauty", "influencer", "lifestyle"],
-  },
-  {
-    id: "political-meme",
-    name: "Political Meme",
-    slug: "political-meme",
-    description:
-      "Attention-grabbing political content with bold text and fast pacing.",
-    category: "political",
-    thumbnail_url: "/templates/political-meme.png",
-    thumbnail: "/templates/political-meme.png",
-    prompt_template: null,
-    default_style: null,
-    default_duration: 10,
-    default_aspect_ratio: "1:1",
-    defaultDuration: 10,
-    is_premium: false,
-    sort_order: 5,
-    created_at: new Date().toISOString(),
-    tags: ["political", "meme", "viral"],
-  },
-  {
-    id: "dropship-ad",
-    name: "Dropship Ad",
-    slug: "dropship-ad",
-    description:
-      "High-converting e-commerce ad with urgency triggers and social proof.",
-    category: "commerce",
-    thumbnail_url: "/templates/dropship.png",
-    thumbnail: "/templates/dropship.png",
-    prompt_template: null,
-    default_style: null,
-    default_duration: 15,
-    default_aspect_ratio: "9:16",
-    defaultDuration: 15,
-    is_premium: false,
-    sort_order: 6,
-    created_at: new Date().toISOString(),
-    tags: ["dropship", "ecommerce", "conversion"],
-  },
-];
+// ─── GET /api/templates ──────────────────────────────────────
+// Fetch templates from Supabase (not hardcoded).
+// Revalidates every 5 minutes.
+
+export const dynamic = "force-dynamic";
+// Alternatively, use ISR: export const revalidate = 300;
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const category = searchParams.get("category");
-  const tag = searchParams.get("tag");
+  try {
+    const { searchParams } = new URL(request.url);
+    const validation = validate(TemplateQuerySchema, Object.fromEntries(searchParams));
 
-  let filtered = TEMPLATES;
+    if (!validation.success) {
+      return NextResponse.json(
+        { error: validation.error.message },
+        { status: 400 }
+      );
+    }
 
-  if (category) {
-    filtered = filtered.filter((t) => t.category === category);
+    const { category, tag, page: rawPage, limit: rawLimit } = validation.data;
+    const page = rawPage ?? 1;
+    const limit = rawLimit ?? 20;
+    const supabase = createServerClient();
+
+    let query = supabase
+      .from("templates")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .range((page - 1) * limit, page * limit - 1);
+
+    if (category) {
+      query = query.eq("category", category);
+    }
+
+    // Tag filtering uses Supabase `contains` on a JSONB column
+    // (if tags are stored in metadata or we do client-side filter)
+    if (tag) {
+      // For now, filter client-side after fetch since tags are app-level
+      log.debug({ tag }, "Tag filter requested — will apply post-fetch");
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      log.error({ err: error.message }, "Template fetch failed");
+      return NextResponse.json(
+        { error: "Failed to fetch templates" },
+        { status: 500 }
+      );
+    }
+
+    // Transform DB rows → application-level Template format
+    let templates = (data ?? []).map((row) => ({
+      ...row,
+      thumbnail: row.thumbnail_url,
+      defaultDuration: row.default_duration ?? 15,
+      tags: inferTags(row),
+    }));
+
+    // Client-side tag filter
+    if (tag) {
+      templates = templates.filter((t) => t.tags.includes(tag));
+    }
+
+    return NextResponse.json({
+      templates,
+      total: templates.length,
+      page,
+      limit,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    log.error({ err: message }, "Templates API error");
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+// ─── Helper: infer tags from template row data ───────────────
+
+function inferTags(row: Record<string, unknown>): string[] {
+  const tags: string[] = [];
+  const name = (row.name as string)?.toLowerCase() ?? "";
+  const slug = (row.slug as string)?.toLowerCase() ?? "";
+  const category = (row.category as string)?.toLowerCase() ?? "";
+
+  // Category-based tags
+  if (category) tags.push(category);
+
+  // Name/slug keyword matching
+  const keywords: Record<string, string[]> = {
+    viral: ["viral", "skibidi", "reaction", "meme"],
+    political: ["political", "democrat", "republican", "campaign"],
+    ecommerce: ["product", "launch", "dropship", "commerce", "shop"],
+    beauty: ["beauty", "influencer", "glam", "lifestyle"],
+    trending: ["trending", "tiktok", "social"],
+  };
+
+  for (const [tag, words] of Object.entries(keywords)) {
+    const combined = `${name} ${slug}`.toLowerCase();
+    if (words.some((w) => combined.includes(w))) {
+      if (!tags.includes(tag)) tags.push(tag);
+    }
   }
 
-  if (tag) {
-    filtered = filtered.filter((t) => t.tags.includes(tag));
+  // Premium badge
+  if (row.is_premium && !tags.includes("premium")) {
+    tags.push("premium");
   }
 
-  return NextResponse.json({
-    templates: filtered,
-    total: filtered.length,
-  });
+  return tags;
 }

@@ -1,21 +1,33 @@
 import { NextResponse } from "next/server";
-import { getQueueStats } from "@/lib/queue";
+import { logger } from "@/lib/logger";
+
+const log = logger.child({ endpoint: "health" });
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const stats = await getQueueStats();
-    return NextResponse.json({
+    // Quick dependency checks
+    const deps: Record<string, string> = {
       status: "ok",
-      timestamp: new Date().toISOString(),
-      queue: stats,
-      version: "0.1.0",
-    });
+      node: process.version,
+      env: process.env.NODE_ENV ?? "unknown",
+    };
+
+    // Check Redis connectivity (non-blocking)
+    try {
+      const { redis } = await import("@/lib/redis");
+      await redis.ping();
+      deps.redis = "connected";
+    } catch {
+      deps.redis = "disconnected";
+    }
+
+    return NextResponse.json(deps);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    log.error({ err: error instanceof Error ? error.message : error }, "Health check failed");
     return NextResponse.json(
-      { status: "degraded", error: message },
+      { status: "error", message: "Health check failed" },
       { status: 503 }
     );
   }

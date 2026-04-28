@@ -7,8 +7,10 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/templates(.*)",
-  "/api/webhook(.*)",
   "/api/health",
+  // Webhooks use signature-based auth (not Clerk session)
+  "/api/webhooks/stripe(.*)",
+  "/api/webhooks/clerk(.*)",
 ]);
 
 export default clerkMiddleware((auth, request) => {

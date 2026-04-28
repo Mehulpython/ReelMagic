@@ -15,6 +15,9 @@
 //   R2_BUCKET           - R2 bucket name
 
 import { startVideoWorker } from "./lib/worker";
+import { logger } from "./lib/logger";
+
+const log = logger.child({ module: "worker-cli" });
 
 // ─── Graceful shutdown ───────────────────────────────────────
 
@@ -23,9 +26,9 @@ const worker = startVideoWorker(
 );
 
 async function shutdown(signal: string) {
-  console.log(`\n🛑 Received ${signal}, shutting down worker...`);
+  log.info(`Received ${signal}, shutting down worker...`);
   await worker.close();
-  console.log("✅ Worker shut down gracefully");
+  log.info("Worker shut down gracefully");
   process.exit(0);
 }
 
@@ -36,7 +39,12 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 setInterval(() => {
   const mem = process.memoryUsage();
-  console.log(
-    `💓 Worker alive | RSS: ${(mem.rss / 1024 / 1024).toFixed(0)}MB | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(0)}MB/${(mem.heapTotal / 1024 / 1024).toFixed(0)}MB`
+  log.debug(
+    {
+      rssMb: Math.round(mem.rss / 1024 / 1024),
+      heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+    },
+    "Worker heartbeat"
   );
-}, 60000); // Log every minute
+}, 60000);

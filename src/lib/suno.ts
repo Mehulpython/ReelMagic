@@ -1,6 +1,9 @@
 // ─── Suno AI Music Generation Integration ────────────────────
 // Generates background music for video ads using Suno API
 
+import { logger } from "./logger";
+const log = logger.child({ module: "suno" });
+
 const SUNO_BASE = "https://api.suno.ai/v1";
 
 // Alternative: Use fal.ai music gen as Suno proxy
@@ -97,7 +100,7 @@ export async function generateBGM(
 
   if (!response.ok) {
     // Fallback to fal.ai on Suno failure
-    console.warn(`Suno API error (${response.status}), falling back to fal.ai`);
+    log.warn({ status: response.status }, "Suno API error, falling back to fal.ai");
     return generateBGMViaFal(prompt, options);
   }
 
@@ -123,7 +126,7 @@ async function generateBGMViaFal(
 ): Promise<BGMResult> {
   const falKey = process.env.FAL_KEY;
   if (!falKey) {
-    console.warn("No FAL_KEY set, returning empty BGM");
+    log.warn("No FAL_KEY set, returning empty BGM");
     return { audioUrl: "", durationSeconds: 0, title: "No BGM" };
   }
 

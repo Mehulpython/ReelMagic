@@ -3,6 +3,9 @@ import { redis } from "./redis";
 import type { VideoJobData, VideoJobResult } from "./queue";
 import { generateImage, generateVideo } from "./fal";
 import { generateVideoFromImage } from "./replicate";
+import { logger } from "./logger";
+
+const log = logger.child({ module: "worker" });
 
 // ─── Pipeline Steps ──────────────────────────────────────────
 
@@ -129,23 +132,23 @@ export function startVideoWorker(concurrency = 3) {
   );
 
   worker.on("completed", (job: Job<VideoJobData, VideoJobResult>) => {
-    console.log(`✅ Job ${job.id} completed — ${job.returnvalue?.outputUrl}`);
+    log.info({ jobId: job.id, outputUrl: job.returnvalue?.outputUrl }, "Job completed");
   });
 
   worker.on("failed", (job: Job<VideoJobData, VideoJobResult> | undefined, err: Error) => {
-    console.error(`❌ Job ${job?.id} failed:`, err.message);
+    log.error({ jobId: job?.id, err: err.message }, "Job failed");
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   worker.on("progress", (job: Job<VideoJobData, VideoJobResult>, progress: any) => {
-    console.log(`⏳ Job ${job.id} progress: ${progress}%`);
+    log.debug({ jobId: job.id, progress }, "Job progress");
   });
 
   worker.on("error", (err: Error) => {
-    console.error("Worker error:", err);
+    log.error({ err: err.message }, "Worker error");
   });
 
-  console.log(`🎬 Video worker started (concurrency: ${concurrency})`);
+  log.info({ concurrency }, "Video worker started");
   return worker;
 }
 

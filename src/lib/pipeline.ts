@@ -5,6 +5,9 @@ import { generateVoiceover } from "./elevenlabs";
 import { generateBGMForTemplate } from "./suno";
 import { assembleVideo, generateTimedCaptions } from "./ffmpeg";
 import { uploadToR2, uploadFromUrl, videoKey, thumbnailKey, audioKey } from "./storage";
+import { logger } from "./logger";
+
+const log = logger.child({ module: "pipeline" });
 
 // Re-export storage key helpers
 export { videoKey, thumbnailKey, audioKey };
@@ -109,11 +112,11 @@ export async function runVideoPipeline(params: {
           const vKey = audioKey(data.userId, data.jobId);
           voiceoverUrl = await uploadFromUrl(voiceoverUrl, vKey, "audio/mpeg");
         } catch (err) {
-          console.warn("Voiceover R2 upload failed:", err);
+          log.warn({ err }, "Voiceover R2 upload failed");
         }
       }
     } catch (err) {
-      console.warn("Voiceover generation failed, continuing without it:", err);
+      log.warn({ err }, "Voiceover generation failed, continuing without it");
     }
   }
   await tracker.completeStep("voiceover");
@@ -129,7 +132,7 @@ export async function runVideoPipeline(params: {
       );
       bgmUrl = bgmResult.audioUrl;
     } catch (err) {
-      console.warn("BGM generation failed, continuing without it:", err);
+      log.warn({ err }, "BGM generation failed, continuing without it");
     }
   }
   await tracker.completeStep("bgm");
@@ -173,7 +176,7 @@ export async function runVideoPipeline(params: {
         finalVideoUrl = `file://${assemblyResult.outputPath}`;
       }
     } catch (err) {
-      console.warn("FFmpeg assembly failed, using raw video:", err);
+      log.warn({ err }, "FFmpeg assembly failed, using raw video");
       finalVideoUrl = videoUrl;
     }
   }
@@ -189,7 +192,7 @@ export async function runVideoPipeline(params: {
         const vKey = videoKey(data.userId, data.jobId);
         finalVideoUrl = await uploadFromUrl(videoUrl, vKey, "video/mp4");
       } catch (err) {
-        console.error("R2 video upload failed:", err);
+        log.error({ err }, "R2 video upload failed");
       }
     }
 
@@ -198,7 +201,7 @@ export async function runVideoPipeline(params: {
       const tKey = thumbnailKey(data.userId, data.jobId);
       thumbUrl = await uploadFromUrl(imageResult.url, tKey, "image/jpeg");
     } catch (err) {
-      console.error("R2 thumbnail upload failed:", err);
+      log.error({ err }, "R2 thumbnail upload failed");
     }
   }
   await tracker.completeStep("upload");

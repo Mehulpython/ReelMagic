@@ -5,102 +5,72 @@ import {
   createPortalSession,
   createCreditPackSession,
 } from "@/lib/stripe";
+import { validate, BillingRequestSchema } from "@/lib/validation";
+import { logger } from "@/lib/logger";
 
-// ─── POST /api/billing/checkout ──────────────────────────────
-// Create a Stripe checkout session for plan subscription or credit pack
+const log = logger.child({ endpoint: "billing" });
+
+// ─── POST /api/billing ───────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Authenticate ──
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // ── Validate ──
     const body = await req.json();
-    const { action } = body;
+    const validation = validate(BillingRequestSchema, body);
+    if (!validation.success) {
+      log.warn({ err: validation.error, userId }, "Billing validation failed");
+      return NextResponse.json(
+        { error: validation.error.message },
+        { status: 400 }
+      );
+    }
 
-    const origin = req.headers.get("origin") || "http://localhost:3000";
+    const origin = req.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-    switch (action) {
-      // ── Subscribe to a plan ──
+    switch (validation.data.action) {
       case "subscribe": {
-        const { plan, billing } = body as {
-          plan: "starter" | "pro";
-          billing: "monthly" | "yearly";
-        };
-
-        if (!plan || !billing) {
-          return NextResponse.json(
-            { error: "Missing plan or billing" },
-            { status: 400 }
-          );
-        }
-
         const session = await createCheckoutSession({
           userId,
           email: body.email || "",
-          plan,
-          billing,
+          plan: validation.data.plan,
+          billing: validation.data.billing,
           successUrl: `${origin}/dashboard?upgraded=true`,
           cancelUrl: `${origin}/pricing`,
         });
-
+        log.info({ userId, plan: validation.data.plan, billing: validation.data.billing }, "Checkout session created");
         return NextResponse.json({ url: session.url });
       }
 
-      // ── Open billing portal ──
       case "portal": {
-        const { customerId } = body as { customerId: string };
-
-        if (!customerId) {
-          return NextResponse.json(
-            { error: "Missing customerId" },
-            { status: 400 }
-          );
-        }
-
         const session = await createPortalSession({
-          customerId,
+          customerId: validation.data.customerId,
           returnUrl: `${origin}/dashboard`,
         });
-
         return NextResponse.json({ url: session.url });
       }
 
-      // ── Buy credit pack ──
       case "credits": {
-        const { credits, priceCents } = body as {
-          credits: number;
-          priceCents: number;
-        };
-
-        if (!credits || !priceCents) {
-          return NextResponse.json(
-            { error: "Missing credits or priceCents" },
-            { status: 400 }
-          );
-        }
-
         const session = await createCreditPackSession({
           userId,
           email: body.email || "",
-          credits,
-          priceCents,
+          credits: validation.data.credits,
+          priceCents: validation.data.priceCents,
           successUrl: `${origin}/dashboard?credits=true`,
           cancelUrl: `${origin}/pricing`,
         });
-
+        log.info({ userId, credits: validation.data.credits }, "Credit pack session created");
         return NextResponse.json({ url: session.url });
       }
-
-      default:
-        return NextResponse.json(
-          { error: "Invalid action. Use: subscribe, portal, or credits" },
-          { status: 400 }
-        );
     }
   } catch (error) {
-    console.error("Billing error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    log.error({ err: message }, "Billing error");
     return NextResponse.json(
       { error: "Billing operation failed" },
       { status: 500 }
