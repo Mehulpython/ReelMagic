@@ -233,6 +233,37 @@ export function generateTimedCaptions(
   });
 }
 
+// ─── Extract Thumbnail Frame from Video ─────────────────────
+
+export async function extractThumbnail(
+  videoPathOrUrl: string,
+  timeOffset = "00:00:01"
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg(videoPathOrUrl)
+      .screenshots({
+        timestamps: [timeOffset],
+        filename: `thumb-${Date.now()}.jpg`,
+        folder: tmpdir(),
+        size: "1280x720",
+      });
+
+    command.on("end", async () => {
+      try {
+        const thumbPath = join(tmpdir(), `thumb-${Date.now()}.jpg`);
+        const buffer = await readFile(thumbPath);
+        await unlink(thumbPath);
+        resolve(buffer);
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    command.on("error", (err: Error) => reject(new Error(`Thumbnail extraction failed: ${err.message}`)));
+    command.run();
+  });
+}
+
 // ─── Create Silent Audio (fallback) ──────────────────────────
 
 export async function createSilentAudio(

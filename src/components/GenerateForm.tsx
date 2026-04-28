@@ -228,6 +228,23 @@ export function GenerateForm() {
     }
   };
 
+  // ── Cancel ──
+
+  const handleCancel = async () => {
+    if (!jobId) return;
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        handleReset();
+      } else {
+        setError(data.message || "Could not cancel job — it may already be processing");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cancel failed");
+    }
+  };
+
   // ── Reset ──
 
   const handleReset = () => {
@@ -406,13 +423,24 @@ export function GenerateForm() {
               )}
             </button>
             {status !== "idle" && (
-              <button
-                type="button"
-                onClick={handleReset}
-                className="rounded-lg border border-white/10 px-4 py-2.5 text-sm text-gray-400 hover:bg-white/5"
-              >
-                Reset
-              </button>
+              <div className="flex items-center gap-2">
+                {status === "generating" && (
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/20 transition-colors"
+                  >
+                    Cancel Job
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="rounded-lg border border-white/10 px-4 py-2.5 text-sm text-gray-400 hover:bg-white/5"
+                >
+                  Reset
+                </button>
+              </div>
             )}
           </div>
 

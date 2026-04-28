@@ -3,7 +3,8 @@ import { generateImage, generateVideo } from "./fal";
 import { generateVideoFromImage } from "./replicate";
 import { generateVoiceover } from "./elevenlabs";
 import { generateBGMForTemplate } from "./suno";
-import { assembleVideo, generateTimedCaptions } from "./ffmpeg";
+import { assembleVideo, generateTimedCaptions, extractThumbnail } from "./ffmpeg";
+import { generateCaptions, toFFmpegDrawtext } from "./captions";
 import { uploadToR2, uploadFromUrl, videoKey, thumbnailKey, audioKey } from "./storage";
 import { logger } from "./logger";
 
@@ -17,9 +18,9 @@ export { videoKey, thumbnailKey, audioKey };
 export const PIPELINE_STEPS = [
   { id: "analyze", name: "Analyzing script", weight: 5 },
   { id: "keyframe", name: "Generating keyframe", weight: 15 },
-  { id: "video", name: "Generating video", weight: 30 },
-  { id: "voiceover", name: "Generating voiceover", weight: 10 },
-  { id: "bgm", name: "Generating background music", weight: 10 },
+  { id: "video", name: "Generating video (AI)", weight: 30 },
+  { id: "voiceover", name: "Recording voiceover", weight: 10 },
+  { id: "bgm", name: "Composing background music", weight: 10 },
   { id: "assemble", name: "Assembling final video", weight: 15 },
   { id: "upload", name: "Uploading to CDN", weight: 10 },
   { id: "finalize", name: "Finalizing", weight: 5 },
@@ -140,25 +141,31 @@ export async function runVideoPipeline(params: {
   // Step 6: Assemble final video with FFmpeg
   let finalVideoUrl = videoUrl;
   let actualDuration = data.durationSeconds;
+  let localVideoPath: string | undefined; // for thumbnail extraction
 
   if (process.env.FFMPEG_PATH || process.env.NODE_ENV !== "production") {
     try {
-      const captions = data.captions || generateTimedCaptions(
-        data.prompt,
-        data.durationSeconds
-      );
+      // Use AI caption generator when captions enabled, fallback to simple timer
+      const rawCaptions = data.captions !== undefined && data.captions.length > 0
+        ? data.captions.map((c) => c) // use provided captions as-is
+        : toFFmpegDrawtext(generateCaptions(data.prompt, data.durationSeconds));
+
+      const legacyCaptions = rawCaptions.length > 0
+        ? rawCaptions
+        : generateTimedCaptions(data.prompt, data.durationSeconds);
 
       const assemblyResult = await assembleVideo({
         videoUrl,
         voiceoverUrl,
         bgmUrl,
-        captions,
+        captions: legacyCaptions,
         watermark: data.watermark || "ReelMagic",
         width: data.aspectRatio === "9:16" ? 1080 : 1920,
         height: data.aspectRatio === "9:16" ? 1920 : 1080,
       });
 
       actualDuration = assemblyResult.durationSeconds;
+      localVideoPath = assemblyResult.outputPath;
 
       // Upload assembled video to R2
       if (process.env.R2_ENDPOINT) {
@@ -171,6 +178,7 @@ export async function runVideoPipeline(params: {
         try {
           const { unlink } = await import("fs/promises");
           await unlink(assemblyResult.outputPath);
+          localVideoPath = undefined; // already deleted
         } catch { /* ignore */ }
       } else {
         finalVideoUrl = `file://${assemblyResult.outputPath}`;
@@ -182,7 +190,7 @@ export async function runVideoPipeline(params: {
   }
   await tracker.completeStep("assemble");
 
-  // Step 7: Upload to R2 (if not already done in assembly)
+  // Step 7: Upload to R2 + extract thumbnail
   let thumbUrl = imageResult.url;
 
   if (!finalVideoUrl.startsWith("file://") && process.env.R2_ENDPOINT) {
@@ -196,12 +204,27 @@ export async function runVideoPipeline(params: {
       }
     }
 
-    // Upload thumbnail
+    // Extract & upload thumbnail from the actual video (not just keyframe)
     try {
+      const thumbBuffer = await extractThumbnail(
+        localVideoPath || finalVideoUrl,
+        "00:00:01" // 1 second in — usually has the best frame
+      );
       const tKey = thumbnailKey(data.userId, data.jobId);
-      thumbUrl = await uploadFromUrl(imageResult.url, tKey, "image/jpeg");
-    } catch (err) {
-      log.error({ err }, "R2 thumbnail upload failed");
+      thumbUrl = await uploadToR2(tKey, thumbBuffer, "image/jpeg");
+      log.debug({ jobId: data.jobId }, "Thumbnail extracted and uploaded");
+    } catch (thumbErr) {
+      // Fallback: use keyframe image as thumbnail
+      log.warn({ err: thumbErr instanceof Error ? thumbErr.message : thumbErr },
+        "Thumbnail extraction failed, using keyframe as fallback");
+      try {
+        const tKey = thumbnailKey(data.userId, data.jobId);
+        thumbUrl = await uploadFromUrl(imageResult.url, tKey, "image/jpeg");
+      } catch (fallbackErr) {
+        log.error({ err: fallbackErr instanceof Error ? fallbackErr.message : fallbackErr },
+          "Thumbnail fallback also failed");
+        thumbUrl = imageResult.url;
+      }
     }
   }
   await tracker.completeStep("upload");
