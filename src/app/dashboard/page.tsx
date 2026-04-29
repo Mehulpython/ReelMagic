@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   Film, Coins, DollarSign, TrendingUp, RefreshCw,
   Video, Clock, CheckCircle, XCircle, Loader2,
+  Share2, ExternalLink,
 } from "lucide-react";
 import Link from "next/link";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
@@ -162,10 +163,23 @@ function VideoCard({ job }: { job: JobInfo }) {
         </p>
         <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
           <span>{new Date(job.created_at).toLocaleDateString()}</span>
-          <span>{job.duration_seconds}s</span>
-          {job.cost_cents != null && (
-            <span>${(job.cost_cents / 100).toFixed(2)}</span>
-          )}
+          <div className="flex items-center gap-2">
+            <span>{job.duration_seconds}s</span>
+            {job.cost_cents != null && (
+              <span>${(job.cost_cents / 100).toFixed(2)}</span>
+            )}
+            {job.status === "completed" && job.id && (
+              <a
+                href={`/watch/${job.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-purple-400 hover:text-purple-300 transition-colors"
+                title="Share this video"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>
@@ -245,12 +259,20 @@ export default function DashboardPage() {
             {user.email} · {user.plan.charAt(0).toUpperCase() + user.plan.slice(1)} Plan
           </p>
         </div>
-        <Link
-          href="/generate"
-          className="btn-primary inline-flex items-center gap-2"
-        >
-          <Film className="h-4 w-4" /> New Video
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/dashboard/brand-kit"
+            className="rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-400 hover:bg-white/5 transition-colors"
+          >
+            🎨 Brand Kit
+          </Link>
+          <Link
+            href="/generate"
+            className="btn-primary inline-flex items-center gap-2"
+          >
+            <Film className="h-4 w-4" /> New Video
+          </Link>
+        </div>
       </div>
 
       {/* Stats Grid */}

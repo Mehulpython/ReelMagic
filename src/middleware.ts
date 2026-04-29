@@ -11,6 +11,9 @@ const isPublicRoute = createRouteMatcher([
   // Webhooks use signature-based auth (not Clerk session)
   "/api/webhooks/stripe(.*)",
   "/api/webhooks/clerk(.*)",
+  // Public share pages (no auth required)
+  "/watch/(.*)",
+  "/api/share/(.*)",
 ]);
 
 export default clerkMiddleware((auth, request) => {
