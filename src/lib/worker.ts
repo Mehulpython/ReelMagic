@@ -83,30 +83,42 @@ async function stepGenerateVideo(
 async function processVideoJob(
   job: Job<VideoJobData, VideoJobResult>
 ): Promise<VideoJobResult> {
-  const { prompt, style, durationSeconds, aspectRatio, negativePrompt, model } = job.data;
+  const { prompt, style, durationSeconds, aspectRatio, negativePrompt, model, inputImageUrl, mode } = job.data;
+  const isImageToVideo = mode === "image-to-video" && !!inputImageUrl;
 
   // Step 1: Build enhanced prompt
   await job.updateProgress(5);
   const enhancedPrompt = [
-    style ? `${style} style.` : "",
+    style ? `${style} style` : "",
     prompt,
     "cinematic lighting, high quality, 4k, professional",
   ]
     .filter(Boolean)
     .join(" ");
 
-  // Step 2: Generate keyframe image (with retry)
-  const imageResult = await stepGenerateKeyframe(
-    job,
-    enhancedPrompt,
-    aspectRatio,
-    negativePrompt
-  );
+  // Step 2: Get source image — either generate keyframe or use uploaded image
+  let imageUrl: string;
+
+  if (isImageToVideo) {
+    // Image-to-video mode: use uploaded image directly, skip keyframe generation
+    imageUrl = inputImageUrl!;
+    log.info({ jobId: job.id }, "Worker: image-to-video mode, skipping keyframe");
+    await job.updateProgress(20); // Skip to post-keyframe progress
+  } else {
+    // Standard text-to-video: generate keyframe image (with retry)
+    const imageResult = await stepGenerateKeyframe(
+      job,
+      enhancedPrompt,
+      aspectRatio,
+      negativePrompt
+    );
+    imageUrl = imageResult.url;
+  }
 
   // Step 3: Animate image → video (with fallback + retry)
   const videoResult = await stepGenerateVideo(
     job,
-    imageResult.url,
+    imageUrl,
     enhancedPrompt,
     durationSeconds
   );
@@ -119,7 +131,7 @@ async function processVideoJob(
 
   return {
     outputUrl: videoResult.url,
-    thumbnailUrl: imageResult.url,
+    thumbnailUrl: isImageToVideo ? inputImageUrl : videoResult.url, // use uploaded image as thumb for i2v
     durationSeconds,
     costCents,
     model: model || "kling-v1",

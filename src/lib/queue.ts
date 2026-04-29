@@ -20,6 +20,10 @@ export interface VideoJobData {
   bgm?: boolean;
   captions?: string[];
   watermark?: string;
+  /** Generation mode — default is text-to-video */
+  mode?: "text-to-video" | "image-to-video";
+  /** Target language for script/voiceover (default: "en") */
+  language?: string;
 }
 
 export interface VideoJobResult {

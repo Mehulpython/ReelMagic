@@ -8,7 +8,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ─── R2 Client ───────────────────────────────────────────────
 
-function createR2Client() {
+export function createR2Client() {
   return new S3Client({
     region: "auto",
     endpoint: process.env.R2_ENDPOINT || "https://account_id.r2.cloudflarestorage.com",

@@ -1,4 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { getMiddlewareCacheHeaders } from "@/lib/cdn";
+import { NextResponse } from "next/server";
 
 const isPublicRoute = createRouteMatcher([
   "/",
@@ -14,11 +16,28 @@ const isPublicRoute = createRouteMatcher([
   // Public share pages (no auth required)
   "/watch/(.*)",
   "/api/share/(.*)",
+  // Analytics events endpoint (anonymous tracking allowed)
+  "/api/analytics/events(.*)",
+]);
+
+// Routes that benefit from CDN cache headers
+const isCacheableRoute = createRouteMatcher([
+  "/watch/(.*)",
 ]);
 
 export default clerkMiddleware((auth, request) => {
   if (!isPublicRoute(request)) {
     auth().protect();
+  }
+
+  // Inject CDN cache headers for share/watch pages
+  if (isCacheableRoute(request)) {
+    const response = NextResponse.next();
+    const cacheHeaders = getMiddlewareCacheHeaders(300); // 5 min s-maxage
+    Object.entries(cacheHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+    return response;
   }
 });
 

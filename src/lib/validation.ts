@@ -16,6 +16,11 @@ export const GenerationRequestSchema = z.object({
   voiceover: z.boolean().optional().default(true),
   bgm: z.boolean().optional().default(true),
   captions: z.boolean().optional().default(true),
+  // Phase 4: Multi-language
+  language: z.enum(["en", "es", "fr", "de", "ja", "zh", "pt", "ko"]).optional().default("en"),
+  // Phase 4: Image-to-video mode
+  inputImageUrl: z.string().url().optional(),
+  mode: z.enum(["text-to-video", "image-to-video"]).optional(),
 });
 
 export type GenerationRequest = z.infer<typeof GenerationRequestSchema>;

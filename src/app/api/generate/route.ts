@@ -40,10 +40,26 @@ export async function POST(req: NextRequest) {
       aspectRatio: rawAspectRatio,
       negativePrompt,
       model,
+      language,
+      inputImageUrl,
+      mode,
     } = validation.data;
 
     const durationSeconds = rawDuration ?? 15;
     const aspectRatio = rawAspectRatio ?? "9:16";
+
+    // Determine mode from input (image-to-video if image URL provided)
+    const generationMode: "text-to-video" | "image-to-video" =
+      mode || (inputImageUrl ? "image-to-video" : "text-to-video");
+
+    // Validate image-to-video constraints
+    if (generationMode === "image-to-video" && !inputImageUrl) {
+      log.warn({ userId }, "Image-to-video mode requested but no inputImageUrl provided");
+      return NextResponse.json(
+        { error: "inputImageUrl is required for image-to-video mode" },
+        { status: 400 }
+      );
+    }
 
     // ── Resolve user plan from Supabase ──
     let plan: "free" | "starter" | "pro" | "enterprise" = "free";
@@ -90,6 +106,9 @@ export async function POST(req: NextRequest) {
       aspectRatio,
       negativePrompt,
       model,
+      language: language || "en",
+      inputImageUrl: inputImageUrl || undefined,
+      mode: generationMode,
     });
 
     log.info({ jobId, userId, plan, templateId, durationSeconds }, "Job queued");

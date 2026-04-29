@@ -97,6 +97,12 @@ export interface GenerationRequest {
   style: string;
   duration?: number;
   aspectRatio?: "9:16" | "16:9" | "1:1";
+  /** Phase 4: Target language for voiceover/translation */
+  language?: string;
+  /** Phase 4: Generation mode */
+  mode?: "text-to-video" | "image-to-video";
+  /** Phase 4: Uploaded image URL (for image-to-video mode) */
+  inputImageUrl?: string;
 }
 
 export interface GenerationResponse {

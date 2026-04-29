@@ -6,6 +6,8 @@ import { generateBGMForTemplate } from "./suno";
 import { assembleVideo, generateTimedCaptions, extractThumbnail } from "./ffmpeg";
 import { generateCaptions, toFFmpegDrawtext } from "./captions";
 import { uploadToR2, uploadFromUrl, videoKey, thumbnailKey, audioKey } from "./storage";
+import { enqueueAssembly } from "./ffmpeg-queue";
+import { translateScript, suggestVoiceForLanguage } from "./translate";
 import { logger } from "./logger";
 
 const log = logger.child({ module: "pipeline" });
@@ -22,6 +24,7 @@ export const PIPELINE_STEPS = [
   { id: "voiceover", name: "Recording voiceover", weight: 10 },
   { id: "bgm", name: "Composing background music", weight: 10 },
   { id: "assemble", name: "Assembling final video", weight: 15 },
+  { id: "ffmpeg-queue", name: "FFmpeg processing (async)", weight: 15 },
   { id: "upload", name: "Uploading to CDN", weight: 10 },
   { id: "finalize", name: "Finalizing", weight: 5 },
 ] as const;
@@ -56,30 +59,52 @@ export async function runVideoPipeline(params: {
 }): Promise<VideoJobResult> {
   const { data, onProgress } = params;
   const tracker = new ProgressTracker(onProgress);
+  const isImageToVideo = data.mode === "image-to-video" && !!data.inputImageUrl;
+  const targetLang = data.language || "en";
 
   // Step 1: Analyze script → build enhanced prompt
+  // Translate script if non-English target language
+  let scriptForVoiceover = data.prompt;
+  if (targetLang !== "en" && data.prompt) {
+    scriptForVoiceover = translateScript(data.prompt, targetLang);
+    log.info({ from: "en", to: targetLang }, "Script translated for voiceover");
+  }
+
   const enhancedPrompt = buildPrompt(data.prompt, data.style);
   await tracker.completeStep("analyze");
 
-  // Step 2: Generate keyframe image
-  const imageWidth = data.aspectRatio === "9:16" ? 576 : 1024;
-  const imageHeight = data.aspectRatio === "9:16" ? 1024 : 576;
+  // Step 2: Generate keyframe image — SKIP in image-to-video mode
+  let imageResult: { url: string } | undefined;
+  let inputImageUrl: string;
 
-  const imageResult = await generateImage({
-    prompt: enhancedPrompt,
-    negativePrompt: data.negativePrompt,
-    width: imageWidth,
-    height: imageHeight,
-  });
+  if (isImageToVideo) {
+    // Use uploaded image directly
+    inputImageUrl = data.inputImageUrl!;
+    log.info({ jobId: data.jobId }, "Image-to-video mode: using uploaded image");
+    // Credit a small weight since we're skipping this step
+    tracker.completeStep("keyframe").catch(() => {});
+  } else {
+    // Standard text-to-video: generate keyframe
+    const imageWidth = data.aspectRatio === "9:16" ? 576 : 1024;
+    const imageHeight = data.aspectRatio === "9:16" ? 1024 : 576;
+
+    imageResult = await generateImage({
+      prompt: enhancedPrompt,
+      negativePrompt: data.negativePrompt,
+      width: imageWidth,
+      height: imageHeight,
+    });
+    inputImageUrl = imageResult.url;
+  }
   await tracker.completeStep("keyframe");
 
-  // Step 3: Generate video from keyframe
+  // Step 3: Generate video from keyframe/image
   let videoUrl = "";
   const duration = String(Math.min(data.durationSeconds, 10));
 
   try {
     const result = await generateVideo({
-      imageUrl: imageResult.url,
+      imageUrl: inputImageUrl,
       prompt: enhancedPrompt,
       duration,
     });
@@ -87,7 +112,7 @@ export async function runVideoPipeline(params: {
   } catch {
     // Fallback to Replicate (CogVideoX)
     const result = await generateVideoFromImage({
-      imageUrl: imageResult.url,
+      imageUrl: inputImageUrl,
       prompt: enhancedPrompt,
       duration: Math.min(data.durationSeconds, 10),
     });
@@ -95,15 +120,22 @@ export async function runVideoPipeline(params: {
   }
   await tracker.completeStep("video");
 
-  // Step 4: Generate voiceover (ElevenLabs)
+  // Step 4: Generate voiceover (ElevenLabs) — with language support
   let voiceoverUrl: string | undefined;
   let voiceoverDuration = 0;
 
-  if (data.voiceover !== false && data.prompt) {
+  if (data.voiceover !== false && scriptForVoiceover) {
     try {
-      const voiceResult = await generateVoiceover(data.prompt, {
-        voiceId: data.voiceId,
-      });
+      // Use language-appropriate voice if available
+      const voiceConfig: { voiceId?: string } = {};
+      if (targetLang !== "en" && !data.voiceId) {
+        const suggested = suggestVoiceForLanguage(targetLang);
+        if (suggested.voiceId) voiceConfig.voiceId = suggested.voiceId;
+      } else if (data.voiceId) {
+        voiceConfig.voiceId = data.voiceId;
+      }
+
+      const voiceResult = await generateVoiceover(scriptForVoiceover, voiceConfig);
       voiceoverUrl = voiceResult.audioUrl;
       voiceoverDuration = voiceResult.durationSeconds;
 
@@ -138,63 +170,85 @@ export async function runVideoPipeline(params: {
   }
   await tracker.completeStep("bgm");
 
-  // Step 6: Assemble final video with FFmpeg
+  // Step 6: Assemble final video — ASYNC via FFmpeg queue
   let finalVideoUrl = videoUrl;
   let actualDuration = data.durationSeconds;
-  let localVideoPath: string | undefined; // for thumbnail extraction
+  let thumbUrl = imageResult?.url || videoUrl;
 
   if (process.env.FFMPEG_PATH || process.env.NODE_ENV !== "production") {
+    // Build captions once (used by both async and sync paths)
+    const rawCaptions = data.captions !== undefined && data.captions.length > 0
+      ? data.captions.map((c) => c)
+      : toFFmpegDrawtext(generateCaptions(data.prompt, data.durationSeconds));
+
+    const legacyCaptions = rawCaptions.length > 0
+      ? rawCaptions
+      : generateTimedCaptions(data.prompt, data.durationSeconds);
+
     try {
-      // Use AI caption generator when captions enabled, fallback to simple timer
-      const rawCaptions = data.captions !== undefined && data.captions.length > 0
-        ? data.captions.map((c) => c) // use provided captions as-is
-        : toFFmpegDrawtext(generateCaptions(data.prompt, data.durationSeconds));
-
-      const legacyCaptions = rawCaptions.length > 0
-        ? rawCaptions
-        : generateTimedCaptions(data.prompt, data.durationSeconds);
-
-      const assemblyResult = await assembleVideo({
+      // ── Enqueue to async FFmpeg queue instead of blocking ──
+      await enqueueAssembly({
+        jobId: data.jobId,
+        userId: data.userId,
+        plan: data.plan,
         videoUrl,
         voiceoverUrl,
         bgmUrl,
-        captions: legacyCaptions,
+        captions: legacyCaptions.length > 0 ? legacyCaptions : undefined,
         watermark: data.watermark || "ReelMagic",
-        width: data.aspectRatio === "9:16" ? 1080 : 1920,
-        height: data.aspectRatio === "9:16" ? 1920 : 1080,
+        prompt: data.prompt,
+        durationSeconds: data.durationSeconds,
+        aspectRatio: data.aspectRatio,
       });
 
-      actualDuration = assemblyResult.durationSeconds;
-      localVideoPath = assemblyResult.outputPath;
+      log.info({ jobId: data.jobId }, "FFmpeg assembly enqueued (async)");
 
-      // Upload assembled video to R2
-      if (process.env.R2_ENDPOINT) {
-        const { readFile: readFs } = await import("fs/promises");
-        const buffer = await readFs(assemblyResult.outputPath);
-        const vKey = videoKey(data.userId, data.jobId);
-        finalVideoUrl = await uploadToR2(vKey, buffer, "video/mp4");
-
-        // Cleanup temp file
-        try {
-          const { unlink } = await import("fs/promises");
-          await unlink(assemblyResult.outputPath);
-          localVideoPath = undefined; // already deleted
-        } catch { /* ignore */ }
-      } else {
-        finalVideoUrl = `file://${assemblyResult.outputPath}`;
-      }
+      // Return immediately — FFmpeg will complete asynchronously
+      // The ffmpeg-status endpoint can be polled for completion
+      finalVideoUrl = videoUrl; // interim URL until FFmpeg finishes
+      actualDuration = data.durationSeconds;
     } catch (err) {
-      log.warn({ err }, "FFmpeg assembly failed, using raw video");
-      finalVideoUrl = videoUrl;
+      log.warn({ err }, "FFmpeg enqueue failed, trying synchronous assembly");
+
+      // Fallback: run synchronously if queue fails
+      try {
+        const assemblyResult = await assembleVideo({
+          videoUrl,
+          voiceoverUrl,
+          bgmUrl,
+          captions: legacyCaptions.length > 0 ? legacyCaptions : undefined,
+          watermark: data.watermark || "ReelMagic",
+          width: data.aspectRatio === "9:16" ? 1080 : 1920,
+          height: data.aspectRatio === "9:16" ? 1920 : 1080,
+        });
+
+        actualDuration = assemblyResult.durationSeconds;
+
+        if (process.env.R2_ENDPOINT) {
+          const { readFile: readFs } = await import("fs/promises");
+          const buffer = await readFs(assemblyResult.outputPath);
+          const vKey = videoKey(data.userId, data.jobId);
+          finalVideoUrl = await uploadToR2(vKey, buffer, "video/mp4");
+
+          try {
+            const { unlink } = await import("fs/promises");
+            await unlink(assemblyResult.outputPath);
+          } catch { /* ignore */ }
+        } else {
+          finalVideoUrl = `file://${assemblyResult.outputPath}`;
+        }
+      } catch (syncErr) {
+        log.warn({ err: syncErr }, "Sync FFmpeg also failed, using raw video");
+        finalVideoUrl = videoUrl;
+      }
     }
   }
+  await tracker.completeStep("ffmpeg-queue");
   await tracker.completeStep("assemble");
 
-  // Step 7: Upload to R2 + extract thumbnail
-  let thumbUrl = imageResult.url;
-
+  // Step 7: Upload raw video to R2 + extract thumbnail
   if (!finalVideoUrl.startsWith("file://") && process.env.R2_ENDPOINT) {
-    // Upload raw video if assembly was skipped
+    // Upload raw video if assembly was skipped or using interim URL
     if (finalVideoUrl === videoUrl) {
       try {
         const vKey = videoKey(data.userId, data.jobId);
@@ -204,27 +258,16 @@ export async function runVideoPipeline(params: {
       }
     }
 
-    // Extract & upload thumbnail from the actual video (not just keyframe)
+    // Extract & upload thumbnail
     try {
-      const thumbBuffer = await extractThumbnail(
-        localVideoPath || finalVideoUrl,
-        "00:00:01" // 1 second in — usually has the best frame
-      );
+      const thumbBuffer = await extractThumbnail(finalVideoUrl, "00:00:01");
       const tKey = thumbnailKey(data.userId, data.jobId);
       thumbUrl = await uploadToR2(tKey, thumbBuffer, "image/jpeg");
       log.debug({ jobId: data.jobId }, "Thumbnail extracted and uploaded");
     } catch (thumbErr) {
-      // Fallback: use keyframe image as thumbnail
       log.warn({ err: thumbErr instanceof Error ? thumbErr.message : thumbErr },
-        "Thumbnail extraction failed, using keyframe as fallback");
-      try {
-        const tKey = thumbnailKey(data.userId, data.jobId);
-        thumbUrl = await uploadFromUrl(imageResult.url, tKey, "image/jpeg");
-      } catch (fallbackErr) {
-        log.error({ err: fallbackErr instanceof Error ? fallbackErr.message : fallbackErr },
-          "Thumbnail fallback also failed");
-        thumbUrl = imageResult.url;
-      }
+        "Thumbnail extraction failed, using keyframe/interim as fallback");
+      thumbUrl = imageResult?.url || finalVideoUrl;
     }
   }
   await tracker.completeStep("upload");

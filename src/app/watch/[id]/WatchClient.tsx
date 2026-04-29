@@ -3,6 +3,8 @@
 import { motion } from "framer-motion";
 import { Play, Share2, ExternalLink, Sparkles } from "lucide-react";
 import Link from "next/link";
+import AnalyticsTracker, { useVideoTracking } from "@/components/AnalyticsTracker";
+import { useState, useCallback } from "react";
 
 interface VideoData {
   id: string;
@@ -25,6 +27,13 @@ export default function WatchClient({
   initialData: VideoData;
 }) {
   const video = initialData;
+  const [videoError, setVideoError] = useState(false);
+  const videoHandlers = useVideoTracking(videoId);
+
+  // Build streaming-optimized URL (adds range request hints)
+  const videoSrc = video.output_url
+    ? `${video.output_url}${video.output_url.includes("?") ? "&" : "?"}_stream=1`
+    : undefined;
 
   const handleShare = async () => {
     if (navigator.share) {
@@ -43,10 +52,17 @@ export default function WatchClient({
     }
   };
 
+  const handleVideoError = useCallback(() => {
+    setVideoError(true);
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#0a0a1a]">
       {/* Background gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-purple-900/20 via-transparent to-transparent" />
+
+      {/* Analytics tracking */}
+      <AnalyticsTracker pageName="watch" />
 
       <div className="relative mx-auto max-w-4xl px-6 py-12">
         {/* Header */}
@@ -74,7 +90,7 @@ export default function WatchClient({
           )}
         </motion.div>
 
-        {/* Video Player */}
+        {/* Video Player — streaming optimized */}
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -83,20 +99,37 @@ export default function WatchClient({
         >
           <div
             className="relative flex items-center justify-center bg-black"
-            style={{ aspectRatio: video.aspect_ratio === "16:9" ? "16/9" : video.aspect_ratio === "1:1" ? "1/1" : "9/16" }}
+            style={{
+              aspectRatio:
+                video.aspect_ratio === "16/9"
+                  ? "16/9"
+                  : video.aspect_ratio === "1/1"
+                    ? "1/1"
+                    : "9/16",
+            }}
           >
-            {video.output_url ? (
+            {!videoError && videoSrc ? (
               <video
-                src={video.output_url}
+                src={videoSrc}
                 poster={video.thumbnail_url || undefined}
                 controls
                 autoPlay
+                preload="metadata"
+                playsInline
                 className="h-full w-full object-contain"
+                onError={handleVideoError}
+                onPlay={videoHandlers.onPlay}
+                onPause={videoHandlers.onPause}
+                onEnded={videoHandlers.onEnded}
               />
             ) : (
               <div className="flex flex-col items-center gap-3 text-gray-600">
                 <Play className="h-12 w-12" />
-                <span>Video not available</span>
+                <span>
+                  {videoError
+                    ? "Video failed to load. Please try again later."
+                    : "Video not available"}
+                </span>
               </div>
             )}
           </div>

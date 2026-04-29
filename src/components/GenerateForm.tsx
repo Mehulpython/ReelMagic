@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Send, Clapperboard, Palette, Clock, Ratio, Mic, Music, Type } from "lucide-react";
+import { Send, Clapperboard, Palette, Clock, Ratio, Mic, Music, Type, Upload, Globe, Image, X } from "lucide-react";
 import { VideoPreview } from "./VideoPreview";
 import { LoadingSpinner } from "./LoadingSpinner";
 
@@ -26,6 +26,18 @@ const STYLES = [
   { value: "trendy", label: "🔥 Trendy" },
 ];
 
+// Phase 4: Supported languages for voiceover
+const LANGUAGES = [
+  { code: "en", label: "English", flag: "🇺🇸" },
+  { code: "es", label: "Español", flag: "🇪🇸" },
+  { code: "fr", label: "Français", flag: "🇫🇷" },
+  { code: "de", label: "Deutsch", flag: "🇩🇪" },
+  { code: "ja", label: "日本語", flag: "🇯🇵" },
+  { code: "zh", label: "中文", flag: "🇨🇳" },
+  { code: "pt", label: "Português", flag: "🇧🇷" },
+  { code: "ko", label: "한국어", flag: "🇰🇷" },
+];
+
 const PIPELINE_LABELS: Record<string, string> = {
   analyze: "Analyzing script",
   keyframe: "Generating keyframe image",
@@ -33,6 +45,7 @@ const PIPELINE_LABELS: Record<string, string> = {
   voiceover: "Recording voiceover",
   bgm: "Composing background music",
   assemble: "Assembling final video",
+  "ffmpeg-queue": "Processing video (FFmpeg)",
   upload: "Uploading to CDN",
   finalize: "Finalizing",
 };
@@ -57,6 +70,19 @@ export function GenerateForm() {
   const [voiceover, setVoiceover] = useState(true);
   const [bgm, setBgm] = useState(true);
   const [captions, setCaptions] = useState(true);
+
+  // Phase 4: Language selection
+  const [language, setLanguage] = useState("en");
+
+  // Phase 4: Image upload (image-to-video mode)
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null); // preview URL
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Derived mode
+  const mode = uploadedImage ? "image-to-video" : "text-to-video";
 
   // Generation state
   const [status, setStatus] = useState<GenerationStatus>("idle");
@@ -180,11 +206,76 @@ export function GenerateForm() {
     }, 5000);
   }, []);
 
+  // ── Image Upload Handler (Phase 4) ──
+
+  const handleImageUpload = useCallback(async (file: File) => {
+    if (!file) return;
+
+    // Client-side validation
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setUploadError("JPEG, PNG, or WebP only");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setUploadError("File too large (max 20MB)");
+      return;
+    }
+
+    setUploading(true);
+    setUploadError(null);
+
+    // Show preview immediately
+    const previewUrl = URL.createObjectURL(file);
+    setUploadedImage(previewUrl);
+    setUploadedFile(file);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload/image", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || `Upload failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      // Replace preview URL with the actual R2 URL
+      setUploadedImage(data.url);
+      setUploadedFile(null); // Clear local file ref, we have the server URL now
+      console.log(`Image uploaded: ${data.key}`);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+      setUploadedImage(null);
+      setUploadedFile(null);
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleImageUpload(file);
+  }, [handleImageUpload]);
+
+  const removeImage = () => {
+    setUploadedImage(null);
+    setUploadedFile(null);
+    setUploadError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   // ── Submit ──
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!script.trim()) return;
+    // In image-to-video mode, script is optional but helpful as motion guidance
+    if (!script.trim() && !uploadedImage) return;
 
     setStatus("submitting");
     setError(null);
@@ -194,19 +285,28 @@ export function GenerateForm() {
     setProgress({ percent: 0, currentStep: "Submitting...", steps: [] });
 
     try {
+      const body: Record<string, unknown> = {
+        script: script.trim() || "Animate this image into a dynamic video ad",
+        templateId: template,
+        style,
+        durationSeconds: duration,
+        aspectRatio,
+        voiceover,
+        bgm,
+        captions,
+        language,
+        mode,
+      };
+
+      // Include image URL if in image-to-video mode
+      if (uploadedImage && mode === "image-to-video") {
+        body.inputImageUrl = uploadedImage;
+      }
+
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          script,
-          templateId: template,
-          style,
-          durationSeconds: duration,
-          aspectRatio,
-          voiceover,
-          bgm,
-          captions,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -258,6 +358,11 @@ export function GenerateForm() {
     setThumbnailUrl(null);
     setError(null);
     setProgress({ percent: 0, currentStep: "", steps: [] });
+    // Reset Phase 4 state
+    setUploadedImage(null);
+    setUploadedFile(null);
+    setUploadError(null);
+    setLanguage("en");
   };
 
   // ── Est. cost ──
@@ -352,6 +457,98 @@ export function GenerateForm() {
               onClick={() => setCaptions(!captions)}
               disabled={status === "generating"}
             />
+          </div>
+
+          {/* Phase 4: Language Selector */}
+          <div>
+            <label className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-300">
+              <Globe className="h-4 w-4 text-purple-400" />
+              Voiceover Language
+            </label>
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              className="input-dark w-full appearance-none cursor-pointer"
+              disabled={status === "generating"}
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code} className="bg-[#1a1a2e] text-white">
+                  {l.flag} {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Phase 4: Image Upload (Image-to-Video Mode) */}
+          <div>
+            <label className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-300">
+              <Image className="h-4 w-4 text-purple-400" />
+              Source Image (Optional — enables Image-to-Video)
+            </label>
+
+            {!uploadedImage ? (
+              <div
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 transition-colors ${
+                  uploading
+                    ? "border-purple-400/50 bg-purple-500/5"
+                    : "border-gray-700 bg-white/[0.02] hover:border-purple-500/50 hover:bg-white/[0.04]"
+                }`}
+              >
+                {uploading ? (
+                  <>
+                    <LoadingSpinner size="sm" />
+                    <span className="text-sm text-gray-400">Uploading...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-8 w-8 text-gray-600" />
+                    <span className="text-sm text-gray-400">
+                      Drag & drop an image, or click to browse
+                    </span>
+                    <span className="text-xs text-gray-600">JPEG, PNG, WebP · Max 20MB</span>
+                  </>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleImageUpload(f);
+                  }}
+                  className="hidden"
+                  disabled={status === "generating" || uploading}
+                />
+              </div>
+            ) : (
+              <div className="relative overflow-hidden rounded-xl border border-purple-500/30 bg-white/[0.02]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={uploadedImage}
+                  alt="Uploaded source image"
+                  className="h-48 w-full object-contain"
+                />
+                <button
+                  type="button"
+                  onClick={removeImage}
+                  className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5 text-gray-300 hover:bg-red-500/80 hover:text-white transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
+                  <p className="text-xs text-purple-300">
+                    ✨ Image-to-Video mode active — your image will be animated
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {uploadError && (
+              <p className="mt-1 text-xs text-red-400">{uploadError}</p>
+            )}
           </div>
 
           {/* Duration Slider */}
