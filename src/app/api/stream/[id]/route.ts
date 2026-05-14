@@ -1,4 +1,6 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { createServerClient } from "@/lib/supabase";
 import { getQueueJobStatus } from "@/lib/queue";
 import { logger } from "@/lib/logger";
 
@@ -17,7 +19,35 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // ── Authenticate & verify ownership ──
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { id } = await params;
+
+  const supabase = createServerClient();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("clerk_id", userId)
+    .single();
+
+  if (!profile) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data: job } = await supabase
+    .from("video_jobs")
+    .select("id, user_id")
+    .eq("id", id)
+    .single();
+
+  if (!job || job.user_id !== profile.id) {
+    return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  }
+
   const encoder = new TextEncoder();
   const jobId = id;
 

@@ -70,9 +70,8 @@ export async function generateBGM(
   options: BGMOptions = {}
 ): Promise<BGMResult> {
   const apiKey = process.env.SUNO_API_KEY;
-
   if (!apiKey) {
-    // Fallback: Try fal.ai Stable Audio
+    log.warn("SUNO_API_KEY not configured — falling back to fal.ai");
     return generateBGMViaFal(prompt, options);
   }
 

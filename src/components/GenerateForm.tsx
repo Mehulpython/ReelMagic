@@ -247,7 +247,7 @@ export function GenerateForm() {
       // Replace preview URL with the actual R2 URL
       setUploadedImage(data.url);
       setUploadedFile(null); // Clear local file ref, we have the server URL now
-      console.log(`Image uploaded: ${data.key}`);
+      // Image upload logged silently
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed");
       setUploadedImage(null);

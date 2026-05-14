@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { headers } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
+import { createHash } from "crypto";
 import { addVideoJob } from "@/lib/queue";
-import { getQueueJobStatus } from "@/lib/queue";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { validate, GenerationRequestSchema } from "@/lib/validation";
 import { createServerClient } from "@/lib/supabase";
@@ -10,7 +9,11 @@ import { logger } from "@/lib/logger";
 
 const log = logger.child({ endpoint: "api-v1" });
 
-// ─── API Key Authentication ────────────────────────────────────
+// ─── API Key Authentication (SHA-256 hashed) ──────────────────
+
+function hashApiKey(key: string): string {
+  return createHash("sha256").update(key).digest("hex");
+}
 
 async function authenticateApiKey(req: NextRequest): Promise<{
   userId: string;
@@ -23,12 +26,12 @@ async function authenticateApiKey(req: NextRequest): Promise<{
   if (!apiKey) return null;
 
   try {
-    // Hash lookup (in production use bcrypt/scrypt)
+    const hashedKey = hashApiKey(apiKey);
     const supabase = createServerClient();
     const { data: keyRecord } = await supabase
       .from("api_keys")
-      .select("user_id, profiles!inner(plan)")
-      .eq("key_hash", apiKey) // TODO: hash comparison
+      .select("user_id, key_hash, profiles!inner(plan)")
+      .eq("key_hash", hashedKey)
       .single();
 
     if (!keyRecord) return null;
@@ -37,7 +40,7 @@ async function authenticateApiKey(req: NextRequest): Promise<{
     await supabase
       .from("api_keys")
       .update({ last_used_at: new Date().toISOString() })
-      .eq("key_hash", apiKey);
+      .eq("key_hash", hashedKey);
 
     return {
       userId: keyRecord.user_id,

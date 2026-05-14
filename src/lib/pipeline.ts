@@ -142,7 +142,7 @@ export async function runVideoPipeline(params: {
       // Upload voiceover to R2 if possible
       if (voiceoverUrl && process.env.R2_ENDPOINT) {
         try {
-          const vKey = audioKey(data.userId, data.jobId);
+          const vKey = audioKey(data.userId, data.jobId, "voiceover");
           voiceoverUrl = await uploadFromUrl(voiceoverUrl, vKey, "audio/mpeg");
         } catch (err) {
           log.warn({ err }, "Voiceover R2 upload failed");

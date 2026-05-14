@@ -7,28 +7,22 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    // Quick dependency checks
-    const deps: Record<string, string> = {
-      status: "ok",
-      node: process.version,
-      env: process.env.NODE_ENV ?? "unknown",
-    };
-
     // Check Redis connectivity (non-blocking)
+    let redisOk = true;
     try {
       const { redis } = await import("@/lib/redis");
       await redis.ping();
-      deps.redis = "connected";
     } catch {
-      deps.redis = "disconnected";
+      redisOk = false;
     }
 
-    return NextResponse.json(deps);
+    if (!redisOk) {
+      return NextResponse.json({ status: "degraded" }, { status: 503 });
+    }
+
+    return NextResponse.json({ status: "ok" });
   } catch (error) {
     log.error({ err: error instanceof Error ? error.message : error }, "Health check failed");
-    return NextResponse.json(
-      { status: "error", message: "Health check failed" },
-      { status: 503 }
-    );
+    return NextResponse.json({ status: "error" }, { status: 503 });
   }
 }

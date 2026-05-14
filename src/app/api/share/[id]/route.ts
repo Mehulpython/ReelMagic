@@ -19,9 +19,9 @@ export async function GET(
       .from("video_jobs")
       .select(`
         id, prompt, template_id, style, duration_seconds, aspect_ratio,
-        status, output_url, thumbnail_url, cost_cents, generation_model,
-        created_at, completed_at,
-        profiles!inner(email, full_name)
+        status, output_url, thumbnail_url, generation_model,
+        created_at, completed_at, is_public,
+        profiles!inner(full_name)
       `)
       .eq("id", id)
       .single();
@@ -30,9 +30,13 @@ export async function GET(
       return NextResponse.json({ error: "Video not found" }, { status: 404 });
     }
 
-    // Only allow sharing completed videos
+    // Only allow sharing completed, public videos
     if (job.status !== "completed") {
       return NextResponse.json({ error: "Video is not ready for sharing" }, { status: 403 });
+    }
+
+    if (!job.is_public) {
+      return NextResponse.json({ error: "Video is not public" }, { status: 403 });
     }
 
     // View count tracking (optional: add a share_views table + trigger)

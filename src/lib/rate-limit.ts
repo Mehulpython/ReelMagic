@@ -1,3 +1,7 @@
+// ─── Rate Limiting ──────────────────────────────────────────
+// Plan-based rate limiting using Upstash Redis.
+// Falls back to no-op in development, fails closed in production.
+
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 
@@ -9,6 +13,8 @@ export const PLAN_LIMITS = {
 } as const;
 
 export type PlanTier = keyof typeof PLAN_LIMITS;
+
+const isProduction = process.env.NODE_ENV === "production";
 
 function getUpstashRedis(): Redis | null {
   if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
@@ -25,7 +31,18 @@ export function createRateLimiter(plan: PlanTier) {
   const upstash = getUpstashRedis();
 
   if (!upstash) {
-    // No-op fallback for local dev
+    // In production, fail closed — no Redis means no access
+    if (isProduction) {
+      return {
+        limit: async (_key: string) => ({
+          success: false as const,
+          remaining: 0,
+          limit: limits.perHour,
+          reset: 0,
+        }),
+      };
+    }
+    // Dev mode: no-op (allow all)
     return {
       limit: async (_key: string) => ({
         success: true as const,
@@ -52,7 +69,10 @@ export async function checkRateLimit(
     const result = await limiter.limit(userId);
     return { allowed: result.success, remaining: result.remaining };
   } catch {
-    // Fail open — allow on error
+    // In production, fail closed on error
+    if (isProduction) {
+      return { allowed: false, remaining: 0 };
+    }
     return { allowed: true, remaining: PLAN_LIMITS[plan].perHour };
   }
 }

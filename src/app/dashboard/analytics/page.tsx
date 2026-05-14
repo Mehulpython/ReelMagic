@@ -100,7 +100,7 @@ export default function AnalyticsDashboard() {
         setFunnel({ steps, totalEntries: steps[0].count });
       }
     } catch (err) {
-      console.error("Failed to load analytics:", err);
+      console.error("Failed to load analytics:", err); // TODO: replace with logger when client-side logger is available
     } finally {
       setLoading(false);
     }

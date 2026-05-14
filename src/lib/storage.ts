@@ -8,13 +8,21 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ─── R2 Client ───────────────────────────────────────────────
 
+function getRequiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 export function createR2Client() {
   return new S3Client({
     region: "auto",
-    endpoint: process.env.R2_ENDPOINT || "https://account_id.r2.cloudflarestorage.com",
+    endpoint: getRequiredEnv("R2_ENDPOINT"),
     credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID || "",
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || "",
+      accessKeyId: getRequiredEnv("R2_ACCESS_KEY_ID"),
+      secretAccessKey: getRequiredEnv("R2_SECRET_ACCESS_KEY"),
     },
   });
 }
@@ -88,14 +96,14 @@ export async function deleteFromR2(key: string): Promise<void> {
 
 // ─── Key Helpers ─────────────────────────────────────────────
 
-export function videoKey(userId: string, jobId: string, ext = "mp4") {
-  return `videos/${userId}/${jobId}/output.${ext}`;
+export function videoKey(userId: string, jobId: string) {
+  return `videos/${userId}/${jobId}.mp4`;
 }
 
-export function thumbnailKey(userId: string, jobId: string, ext = "jpg") {
-  return `thumbnails/${userId}/${jobId}/thumb.${ext}`;
+export function thumbnailKey(userId: string, jobId: string) {
+  return `thumbnails/${userId}/${jobId}.jpg`;
 }
 
-export function audioKey(userId: string, jobId: string, ext = "mp3") {
-  return `audio/${userId}/${jobId}/voiceover.${ext}`;
+export function audioKey(userId: string, jobId: string, type: "voiceover" | "bgm") {
+  return `audio/${userId}/${jobId}-${type}.mp3`;
 }

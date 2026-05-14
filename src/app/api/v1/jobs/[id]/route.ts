@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { getQueueJobStatus } from "@/lib/queue";
 import { createServerClient } from "@/lib/supabase";
 import { logger } from "@/lib/logger";
 
 const log = logger.child({ endpoint: "api-v1-job" });
 
-// ─── API Key Auth (same as parent route) ─────────────────────
+// ─── API Key Auth (SHA-256 hashed) ─────────────────────
+
+function hashApiKey(key: string): string {
+  return createHash("sha256").update(key).digest("hex");
+}
 
 async function authenticateApiKey(req: NextRequest): Promise<string | null> {
   const header = req.headers.get("authorization");
@@ -13,11 +18,12 @@ async function authenticateApiKey(req: NextRequest): Promise<string | null> {
 
   const apiKey = header.slice(7);
   try {
+    const hashedKey = hashApiKey(apiKey);
     const supabase = createServerClient();
     const { data: keyRecord } = await supabase
       .from("api_keys")
       .select("user_id")
-      .eq("key_hash", apiKey)
+      .eq("key_hash", hashedKey)
       .single();
     return keyRecord?.user_id ?? null;
   } catch {

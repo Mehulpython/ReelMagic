@@ -27,8 +27,7 @@ export async function generateVoiceover(
 ): Promise<{ audioUrl: string; durationSeconds: number }> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
-    // Return silent audio placeholder
-    return { audioUrl: "", durationSeconds: 0 };
+    throw new Error("ELEVENLABS_API_KEY environment variable is required for voiceover generation");
   }
 
   const voiceId = options.voiceId || AD_VOICES.rachel;

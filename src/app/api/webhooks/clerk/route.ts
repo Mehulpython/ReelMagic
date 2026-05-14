@@ -17,9 +17,9 @@ async function verifySignature(
 
   if (!svixId || !svixTimestamp || !svixSignature) return false;
 
-  const secret = process.env.CLERK_WEBHOOK_SIGNING_SECRET;
+  const secret = process.env.CLERK_WEBHOOK_SECRET;
   if (!secret) {
-    log.warn("Missing CLERK_WEBHOOK_SIGNING_SECRET");
+    log.warn("Missing CLERK_WEBHOOK_SECRET");
     return false;
   }
 

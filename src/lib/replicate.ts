@@ -1,11 +1,20 @@
 import Replicate from "replicate";
 
 // ─── Replicate Client Configuration ──────────────────────────
-// Replicate is used for video generation models (Wan, CogVideo, etc.)
+// Lazy-initialized to avoid throwing during Next.js build.
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-});
+let _replicate: Replicate | null = null;
+
+function getReplicate(): Replicate {
+  const apiToken = process.env.REPLICATE_API_TOKEN;
+  if (!apiToken) {
+    throw new Error("REPLICATE_API_TOKEN environment variable is required");
+  }
+  if (!_replicate) {
+    _replicate = new Replicate({ auth: apiToken });
+  }
+  return _replicate;
+}
 
 /**
  * Generate video from text prompt using Replicate
@@ -17,9 +26,7 @@ export async function generateVideoFromText(params: {
   aspectRatio?: string;
   model?: string;
 }): Promise<{ url: string }> {
-  // TODO: Implement with actual Replicate model
-  // Example models: stability-ai/stable-video-diffusion, minimax/video-01
-  const output = await replicate.run(
+  const output = await getReplicate().run(
     "minimax/video-01",
     {
       input: {
@@ -43,8 +50,7 @@ export async function generateVideoFromImage(params: {
   duration?: number;
   model?: string;
 }): Promise<{ url: string }> {
-  // TODO: Implement with actual Replicate image-to-video model
-  const output = await replicate.run(
+  const output = await getReplicate().run(
     "stability-ai/stable-video-diffusion",
     {
       input: {
@@ -63,16 +69,14 @@ export async function generateVideoFromImage(params: {
  */
 export async function generateMusic(params: {
   prompt: string;
-  duration?: number;
-  style?: string;
+  durationSeconds?: number;
 }): Promise<{ url: string }> {
-  // TODO: Implement with music generation model
-  const output = await replicate.run(
+  const output = await getReplicate().run(
     "meta/musicgen",
     {
       input: {
         prompt: params.prompt,
-        duration: params.duration || 15,
+        duration: params.durationSeconds || 10,
       },
     }
   );
@@ -81,5 +85,3 @@ export async function generateMusic(params: {
     url: output as unknown as string,
   };
 }
-
-export { replicate };
