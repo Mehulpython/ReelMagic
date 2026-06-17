@@ -28,18 +28,17 @@ export function Footer() {
               <li><Link href="/generate" className="transition-colors hover:text-gray-300">Generate</Link></li>
               <li><Link href="/templates" className="transition-colors hover:text-gray-300">Templates</Link></li>
               <li><Link href="/pricing" className="transition-colors hover:text-gray-300">Pricing</Link></li>
-              <li><Link href="#" className="transition-colors hover:text-gray-300">API Docs</Link></li>
+              <li><Link href="/dashboard" className="transition-colors hover:text-gray-300">Dashboard</Link></li>
             </ul>
           </div>
 
-          {/* Company */}
+          {/* Resources */}
           <div>
-            <h4 className="mb-3 text-sm font-semibold text-white">Company</h4>
+            <h4 className="mb-3 text-sm font-semibold text-white">Resources</h4>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><Link href="#" className="transition-colors hover:text-gray-300">About</Link></li>
-              <li><Link href="#" className="transition-colors hover:text-gray-300">Blog</Link></li>
-              <li><Link href="#" className="transition-colors hover:text-gray-300">Careers</Link></li>
-              <li><Link href="#" className="transition-colors hover:text-gray-300">Contact</Link></li>
+              <li><Link href="/templates" className="transition-colors hover:text-gray-300">Browse Templates</Link></li>
+              <li><Link href="/generate" className="transition-colors hover:text-gray-300">Try It Free</Link></li>
+              <li><Link href="/pricing" className="transition-colors hover:text-gray-300">Plans & Pricing</Link></li>
             </ul>
           </div>
 
@@ -47,9 +46,8 @@ export function Footer() {
           <div>
             <h4 className="mb-3 text-sm font-semibold text-white">Legal</h4>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><Link href="#" className="transition-colors hover:text-gray-300">Privacy</Link></li>
-              <li><Link href="#" className="transition-colors hover:text-gray-300">Terms</Link></li>
-              <li><Link href="#" className="transition-colors hover:text-gray-300">DMCA</Link></li>
+              <li><Link href="/pricing" className="transition-colors hover:text-gray-300">Terms of Service</Link></li>
+              <li><Link href="/pricing" className="transition-colors hover:text-gray-300">Privacy Policy</Link></li>
             </ul>
           </div>
         </div>
