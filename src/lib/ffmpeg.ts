@@ -69,7 +69,7 @@ export async function assembleVideo(input: AssemblyInput): Promise<AssemblyResul
     // Build complex filter graph
     const filterComplex: string[] = [];
     let inputStreamCount = 1; // video is always [0:v]
-    let audioMixInputs: string[] = [];
+    const audioMixInputs: string[] = [];
 
     // ── Step 1: Scale & pad video to target resolution ──
     filterComplex.push(
